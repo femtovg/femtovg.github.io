@@ -158,73 +158,132 @@ cargo run --example demo
 <blockquote>
 <p>If you're new to graphics, maybe this part will feel a bit overwhelming. Don't worry, we'll wrap all the weird code in a function and never worry about it again.</p>
 </blockquote>
-<p>So, how do we get this OpenGL context? We'll use the <code>glutin</code> library to create a Window, as well as a context for rendering to that window:</p>
+<p>So, how do we get this OpenGL context? We'll use the winit library to create a window and the <code>glutin</code> library to create an OpenGL context for rendering to that window:</p>
 <pre><code class="language-toml">[dependencies]
-glutin = { version = &quot;0.28.0&quot;, features = [&quot;x11&quot;] }
+winit = &quot;0.28.6&quot;
+glutin = &quot;0.30.10&quot;
 </code></pre>
 <p>The first thing we need to do is create an Event Loop – we'll only really use it later, but we can't even create a window without it!</p>
-<pre><code class="language-rust ignore">use glutin::event_loop::EventLoop;
+<pre><code class="language-rust ignore">use winit::event_loop::EventLoop;
 
 fn main() {
     let event_loop = EventLoop::new();
 }
 </code></pre>
 <p>Let's configure a window. We can specify many settings here, but let's just set the size and title:</p>
-<pre><code class="language-rust ignore">use glutin::window::WindowBuilder;
-use glutin::dpi::PhysicalSize;
+<pre><code class="language-rust ignore">use winit::window::WindowBuilder;
+use winit::dpi::PhysicalSize;
 
 let window_builder = WindowBuilder::new()
     .with_inner_size(PhysicalSize::new(1000., 600.))
     .with_title(&quot;Femtovg&quot;);
 </code></pre>
-<p>Now, we can create a context for this window – note that we pass <code>window_builder</code> as an argument:</p>
-<pre><code class="language-rust ignore">use glutin::ContextBuilder;
+<p>Next we specify a configuration for that window. Usually windows may have many different properties. Think transparency, OpenGL support, bit depth. The following lines find one that is suitable for rendering:</p>
+<pre><code class="language-rust ignore">use glutin_winit::DisplayBuilder;
 
-let context = ContextBuilder::new()
-    .with_vsync(false)
-    .build_windowed(window_builder, &amp;event_loop)
-    .unwrap();
-</code></pre>
-<p>Finally, we have to make the context current:</p>
-<pre><code class="language-rust ignore">let current_context = unsafe {
-    context
-        .make_current()
-        .expect(&quot;Could not make the context current&quot;)
+use glutin::{
+    config::ConfigTemplateBuilder,
+    context::ContextAttributesBuilder,
+    context::PossiblyCurrentContext,
+    display::GetGlDisplay,
+    prelude::*,
 };
+
+let template = ConfigTemplateBuilder::new().with_alpha_size(8);
+
+let display_builder = DisplayBuilder::new().with_window_builder(Some(window_builder));
+
+let (window, gl_config) = display_builder
+    .build(event_loop, template, |mut configs| configs.next().unwrap())
+    .unwrap();
+
+let window = window.unwrap();
+
+let gl_display = gl_config.display();
+
+let context_attributes = ContextAttributesBuilder::new().build(Some(window.raw_window_handle()));
+
+let mut not_current_gl_context =
+    Some(unsafe { gl_display.create_context(&amp;gl_config, &amp;context_attributes).unwrap() });
+
+</code></pre>
+<p>Now, we can create a surface for rendering and make our OpenGL context current on that surface:</p>
+<pre><code class="language-rust ignore">use surface::{SurfaceAttributesBuilder, WindowSurface},
+
+let attrs = SurfaceAttributesBuilder::&lt;WindowSurface&gt;::new().build(
+    window.raw_window_handle(),
+    NonZeroU32::new(1000).unwrap(),
+    NonZeroU32::new(600).unwrap(),
+);
+
+let surface = unsafe { gl_config.display().create_window_surface(&amp;gl_config, &amp;attrs).unwrap() };
+
+not_current_gl_context.take().unwrap().make_current(&amp;surface).unwrap()
 </code></pre>
 <blockquote>
 <p>In order for any OpenGL commands to work, a context must be current; all OpenGL commands affect the state of whichever context is current (<em>from <a href="https://www.khronos.org/opengl/wiki/OpenGL_Context">OpenGL wiki</a></em>)</p>
 </blockquote>
 <p>We'll need the <code>event_loop</code> and <code>current_context</code> for the next step, but as promised, we can hide everything else in a function. Here's the code we have so far:</p>
-<pre><code class="language-rust ignore">use glutin::dpi::PhysicalSize;
-use glutin::event_loop::EventLoop;
-use glutin::window::{Window, WindowBuilder};
-use glutin::{ContextBuilder, ContextWrapper, PossiblyCurrent};
+<pre><code class="language-rust ignore">use std::num::NonZeroU32;
+
+use glutin_winit::DisplayBuilder;
+use raw_window_handle::HasRawWindowHandle;
+use winit::dpi::PhysicalSize;
+use winit::event_loop::EventLoop;
+use winit::window::WindowBuilder;
+
+use glutin::{
+    config::ConfigTemplateBuilder,
+    context::ContextAttributesBuilder,
+    context::PossiblyCurrentContext,
+    display::GetGlDisplay,
+    prelude::*,
+    surface::{SurfaceAttributesBuilder, WindowSurface},
+};
 
 fn main() {
     let event_loop = EventLoop::new();
     let _context = create_window(&amp;event_loop);
 }
 
-fn create_window(event_loop: &amp;EventLoop&lt;()&gt;) -&gt; ContextWrapper&lt;PossiblyCurrent, Window&gt; {
+fn create_window(event_loop: &amp;EventLoop&lt;()&gt;) -&gt; PossiblyCurrentContext {
     let window_builder = WindowBuilder::new()
         .with_inner_size(PhysicalSize::new(1000., 600.))
         .with_title(&quot;Femtovg&quot;);
-    let context = ContextBuilder::new()
-        .with_vsync(false)
-        .build_windowed(window_builder, &amp;event_loop)
+
+    let template = ConfigTemplateBuilder::new().with_alpha_size(8);
+
+    let display_builder = DisplayBuilder::new().with_window_builder(Some(window_builder));
+
+    let (window, gl_config) = display_builder
+        .build(event_loop, template, |mut configs| configs.next().unwrap())
         .unwrap();
 
-    let current_context = unsafe { context.make_current().expect(&quot;Could not make the context current&quot;) };
+    let window = window.unwrap();
 
-    current_context
+    let gl_display = gl_config.display();
+
+    let context_attributes = ContextAttributesBuilder::new().build(Some(window.raw_window_handle()));
+
+    let mut not_current_gl_context =
+        Some(unsafe { gl_display.create_context(&amp;gl_config, &amp;context_attributes).unwrap() });
+
+    let attrs = SurfaceAttributesBuilder::&lt;WindowSurface&gt;::new().build(
+        window.raw_window_handle(),
+        NonZeroU32::new(1000).unwrap(),
+        NonZeroU32::new(600).unwrap(),
+    );
+
+    let surface = unsafe { gl_config.display().create_window_surface(&amp;gl_config, &amp;attrs).unwrap() };
+
+    not_current_gl_context.take().unwrap().make_current(&amp;surface).unwrap()
 }
 </code></pre>
 <p>It compiles, runs, and immediately exits successfully.</p>
 <h2 id="creating-a-canvas"><a class="header" href="#creating-a-canvas">Creating a Canvas</a></h2>
-<p>We have an OpenGL context now – the Femtovg renderer can use it as output for rendering things. Let's create a renderer from the context we have:</p>
-<pre><code class="language-rust ignore">let renderer = OpenGl::new_from_glutin_context(&amp;context)
-    .expect(&quot;Cannot create renderer&quot;);
+<p>We have an OpenGL context and display now – the Femtovg renderer can use it as output for rendering things. Let's create a renderer from the display we have:</p>
+<pre><code class="language-rust ignore">let renderer = unsafe { OpenGl::new_from_function_cstr(|s| gl_display.get_proc_address(s) as *const _) }
+        .expect(&quot;Cannot create renderer&quot;);
 </code></pre>
 <p>The renderer is responsible for drawing things, but we can't draw on it directly – instead, we need to create a Canvas object:</p>
 <pre><code class="language-rust ignore">let mut canvas = Canvas::new(renderer).expect(&quot;Cannot create canvas&quot;);
@@ -233,20 +292,22 @@ fn create_window(event_loop: &amp;EventLoop&lt;()&gt;) -&gt; ContextWrapper&lt;P
 <div style="break-before: page; page-break-before: always;"></div><h1 id="rendering"><a class="header" href="#rendering">Rendering</a></h1>
 <p>Now that we have a <code>canvas</code>, we can start drawing things! To keep things organized, let's create a <code>render</code> function that will do all the rendering:</p>
 <pre><code class="language-rust ignore">fn main() {
+    let (context, gl_display, window, surface) = ...;
     // [...]
     let mut canvas = ..;
 
-    render(&amp;context, &amp;mut canvas);
+    render(&amp;context, &amp;surface, &amp;window, &amp;mut canvas);
 }
 
 fn render&lt;T: Renderer&gt;(
-    context: &amp;ContextWrapper&lt;PossiblyCurrent, Window&gt;,
-    canvas: &amp;mut Canvas&lt;T&gt;
+    context: &amp;PossiblyCurrentContext,
+    surface: &amp;Surface&lt;WindowSurface&gt;,
+    window: &amp;Window,
+    canvas: &amp;mut Canvas&lt;T&gt;,
 ) {}
 </code></pre>
 <p>In <code>render</code>, first let's make sure that the canvas has the right size – it should match the dimensions and DPI of the window:</p>
-<pre><code class="language-rust ignore">let window = context.window();
-let size = window.inner_size();
+<pre><code class="language-rust ignore">let size = window.inner_size();
 canvas.set_size(size.width, size.height, window.scale_factor() as f32);
 </code></pre>
 <p>Next, let's do some actual drawing. As an example, we'll fill a smol red rectangle:</p>
@@ -256,46 +317,92 @@ canvas.set_size(size.width, size.height, window.scale_factor() as f32);
 <p><a href="https://docs.rs/femtovg/latest/femtovg/struct.Canvas.html#method.clear_rect"><code>clear_rect</code></a> fills a rectangle. The first 2 parameters specify its position, and the next 2 specify the dimensions of the rectangle.</p>
 <p><a href="https://docs.rs/femtovg/latest/femtovg/struct.Color.html#method.rgbf"><code>Color::rgbf</code></a> is one of the functions that lets you create a Color. The three parameters correspond to the Red, Green and Blue values in the range 0..1.</p>
 </blockquote>
-<p>Even if you consider your minimalist abstract masterpiece complete, there's actually some more code we need to write. We have to call <a href="https://docs.rs/femtovg/latest/femtovg/struct.Canvas.html#method.flush"><code>canvas.flush()</code></a> to tell the renderer to execute all drawing commands. Then, we must call <a href="https://docs.rs/glutin/latest/glutin/struct.ContextWrapper.html#method.swap_buffers"><code>swap_buffers</code></a> to display what we've rendered: </p>
-<pre><code class="language-rust ignore">context.swap_buffers().expect(&quot;Could not swap buffers&quot;);
+<p>Even if you consider your minimalist abstract masterpiece complete, there's actually some more code we need to write. We have to call <a href="https://docs.rs/femtovg/latest/femtovg/struct.Canvas.html#method.flush"><code>canvas.flush()</code></a> to tell the renderer to execute all drawing commands. Then, we must call <a href="https://docs.rs/glutin/0.30.10/glutin/surface/enum.Surface.html#method.swap_buffers"><code>swap_buffers</code></a> to display what we've rendered: </p>
+<pre><code class="language-rust ignore">canvas.flush();
+surface.swap_buffers(context).expect(&quot;Could not swap buffers&quot;);
 </code></pre>
 <p>The <code>render</code> function is finished, but if you run your program, you won't get to look at it for very long – as soon as <code>render</code> completes, the program exits. To fix this, let's freeze the program with an infinite <code>loop {}</code>.</p>
 <p>Our program now looks like this:</p>
-<pre><code class="language-rust ignore">use femtovg::renderer::OpenGl;
+<pre><code class="language-rust ignore">use std::num::NonZeroU32;
+
+use femtovg::renderer::OpenGl;
 use femtovg::{Canvas, Color, Renderer};
-use glutin::dpi::PhysicalSize;
-use glutin::event_loop::EventLoop;
-use glutin::window::{Window, WindowBuilder};
-use glutin::{ContextBuilder, ContextWrapper, PossiblyCurrent};
+use glutin::surface::Surface;
+use glutin::{context::PossiblyCurrentContext, display::Display};
+use glutin_winit::DisplayBuilder;
+use raw_window_handle::HasRawWindowHandle;
+use winit::event_loop::EventLoop;
+use winit::window::WindowBuilder;
+use winit::{dpi::PhysicalSize, window::Window};
+
+use glutin::{
+    config::ConfigTemplateBuilder,
+    context::ContextAttributesBuilder,
+    display::GetGlDisplay,
+    prelude::*,
+    surface::{SurfaceAttributesBuilder, WindowSurface},
+};
 
 fn main() {
     let event_loop = EventLoop::new();
-    let context = create_window(&amp;event_loop);
+    let (context, gl_display, window, surface) = create_window(&amp;event_loop);
 
-    let renderer = OpenGl::new_from_glutin_context(&amp;context).expect(&quot;Cannot create renderer&quot;);
+    let renderer = unsafe { OpenGl::new_from_function_cstr(|s| gl_display.get_proc_address(s) as *const _) }
+        .expect(&quot;Cannot create renderer&quot;);
+
     let mut canvas = Canvas::new(renderer).expect(&quot;Cannot create canvas&quot;);
+    canvas.set_size(1000, 600, window.scale_factor() as f32);
 
-    render(&amp;context, &amp;mut canvas);
+    render(&amp;context, &amp;surface, &amp;window, &amp;mut canvas);
 
     loop {}
 }
 
-fn create_window(event_loop: &amp;EventLoop&lt;()&gt;) -&gt; ContextWrapper&lt;PossiblyCurrent, Window&gt; {
+fn create_window(event_loop: &amp;EventLoop&lt;()&gt;) -&gt; (PossiblyCurrentContext, Display, Window, Surface&lt;WindowSurface&gt;) {
     let window_builder = WindowBuilder::new()
         .with_inner_size(PhysicalSize::new(1000., 600.))
         .with_title(&quot;Femtovg&quot;);
-    let context = ContextBuilder::new()
-        .with_vsync(false)
-        .build_windowed(window_builder, &amp;event_loop)
-        .unwrap();
-    let current_context = unsafe { context.make_current().expect(&quot;Could not make the context current&quot;) };
 
-    current_context
+    let template = ConfigTemplateBuilder::new().with_alpha_size(8);
+
+    let display_builder = DisplayBuilder::new().with_window_builder(Some(window_builder));
+
+    let (window, gl_config) = display_builder
+        .build(event_loop, template, |mut configs| configs.next().unwrap())
+        .unwrap();
+
+    let window = window.unwrap();
+
+    let gl_display = gl_config.display();
+
+    let context_attributes = ContextAttributesBuilder::new().build(Some(window.raw_window_handle()));
+
+    let mut not_current_gl_context =
+        Some(unsafe { gl_display.create_context(&amp;gl_config, &amp;context_attributes).unwrap() });
+
+    let attrs = SurfaceAttributesBuilder::&lt;WindowSurface&gt;::new().build(
+        window.raw_window_handle(),
+        NonZeroU32::new(1000).unwrap(),
+        NonZeroU32::new(600).unwrap(),
+    );
+
+    let surface = unsafe { gl_config.display().create_window_surface(&amp;gl_config, &amp;attrs).unwrap() };
+
+    (
+        not_current_gl_context.take().unwrap().make_current(&amp;surface).unwrap(),
+        gl_display,
+        window,
+        surface,
+    )
 }
 
-fn render&lt;T: Renderer&gt;(context: &amp;ContextWrapper&lt;PossiblyCurrent, Window&gt;, canvas: &amp;mut Canvas&lt;T&gt;) {
+fn render&lt;T: Renderer&gt;(
+    context: &amp;PossiblyCurrentContext,
+    surface: &amp;Surface&lt;WindowSurface&gt;,
+    window: &amp;Window,
+    canvas: &amp;mut Canvas&lt;T&gt;,
+) {
     // Make sure the canvas has the right size:
-    let window = context.window();
     let size = window.inner_size();
     canvas.set_size(size.width, size.height, window.scale_factor() as f32);
 
@@ -304,8 +411,9 @@ fn render&lt;T: Renderer&gt;(context: &amp;ContextWrapper&lt;PossiblyCurrent, Wi
 
     // Tell renderer to execute all drawing commands
     canvas.flush();
+
     // Display what we've just rendered
-    context.swap_buffers().expect(&quot;Could not swap buffers&quot;);
+    surface.swap_buffers(context).expect(&quot;Could not swap buffers&quot;);
 }
 </code></pre>
 <p>And when we run it, we see the red square we rendered:</p>
@@ -315,12 +423,14 @@ fn render&lt;T: Renderer&gt;(context: &amp;ContextWrapper&lt;PossiblyCurrent, Wi
 <p>Let's edit <code>main</code> to handle events instead of doing nothing with <code>loop {}</code>:</p>
 <pre><code class="language-rust ignore">fn main() {
     let event_loop = EventLoop::new();
-    let context = create_window(&amp;event_loop);
+    let (context, gl_display, window, surface) = create_window(&amp;event_loop);
 
-    let renderer = OpenGl::new_from_glutin_context(&amp;context).expect(&quot;Cannot create renderer&quot;);
+    let renderer = unsafe { OpenGl::new_from_function_cstr(|s| gl_display.get_proc_address(s) as *const _) }
+        .expect(&quot;Cannot create renderer&quot;);
+
     let mut canvas = Canvas::new(renderer).expect(&quot;Cannot create canvas&quot;);
 
-    render(&amp;context, &amp;mut canvas);
+    render(&amp;context, &amp;surface, &amp;window, &amp;mut canvas);
 
     event_loop.run(|event, _target, control_flow| match event {
         Event::WindowEvent { window_id, event } =&gt; {
@@ -330,12 +440,12 @@ fn render&lt;T: Renderer&gt;(context: &amp;ContextWrapper&lt;PossiblyCurrent, Wi
     })
 }
 </code></pre>
-<p><a href="https://docs.rs/glutin/latest/glutin/event_loop/struct.EventLoop.html#method.run"><code>event_loop.run</code></a> will call the provided closure for each new event, until the program exits.</p>
-<p><a href="https://docs.rs/glutin/latest/glutin/event/enum.Event.html"><code>Event</code></a> is the first parameter of the closure, and the one we are most interested in. It is an enum with a few branches for different types of events. In the example above, we only capture and print <code>WindowEvent</code>s, and ignore the rest.</p>
+<p><a href="https://docs.rs/winit/0.28.6/winit/event_loop/struct.EventLoop.html#method.run"><code>event_loop.run</code></a> will call the provided closure for each new event, until the program exits.</p>
+<p><a href="https://docs.rs/winit/0.28.6/winit/event/enum.Event.html"><code>Event</code></a> is the first parameter of the closure, and the one we are most interested in. It is an enum with a few branches for different types of events. In the example above, we only capture and print <code>WindowEvent</code>s, and ignore the rest.</p>
 <p>Each <code>Event::WindowEvent</code> contains:</p>
 <ul>
-<li>A <a href="https://docs.rs/glutin/latest/glutin/window/struct.WindowId.html"><code>WindowId</code></a> – but since we only have 1 window in this example, the ID will always match with our window's ID.</li>
-<li>A <a href="https://docs.rs/glutin/latest/glutin/event/enum.WindowEvent.html"><code>WindowEvent</code></a> enum, which contains information about the window event.</li>
+<li>A <a href="https://docs.rs/winit/0.28.6/winit/window/struct.WindowId.html"><code>WindowId</code></a> – but since we only have 1 window in this example, the ID will always match with our window's ID.</li>
+<li>A <a href="https://docs.rs/winit/0.28.6/winit/event/enum.WindowEvent.html"><code>WindowEvent</code></a> enum, which contains information about the window event.</li>
 </ul>
 <blockquote>
 <p>Note: <code>Event::WindowEvent</code> is a branch of the <code>Event</code> enum, which contains another enum, <code>WindowEvent</code>, of the same name! It can get confusing, but Rust namespaces distinguish between the two – one is <code>glutin::event::Event::WindowEvent</code> and the other is <code>glutin::event::WindowEvent</code>.</p>
@@ -388,19 +498,21 @@ event_loop.run(move |event, _target, control_flow| match event {
     Event::WindowEvent { window_id, event } =&gt; match event {
         WindowEvent::CursorMoved { position, .. } =&gt; {
             mouse_position = position;
-            context.window().request_redraw();
+            window.request_redraw();
         }
         // ...
     },
     Event::RedrawRequested(_) =&gt; {
-        render(&amp;context, &amp;mut canvas, mouse_position);
+        render(&amp;context, &amp;surface, &amp;window, &amp;mut canvas, mouse_position);
     }
     _ =&gt; {}
 })
 </code></pre>
 <p>Finally, we should update our <code>render</code> function to take the mouse position into account – we can just use those coordinates for the square position:</p>
 <pre><code class="language-rust  ignore">fn render&lt;T: Renderer&gt;(
-    context: &amp;ContextWrapper&lt;PossiblyCurrent, Window&gt;,
+    context: &amp;PossiblyCurrentContext,
+    surface: &amp;Surface&lt;WindowSurface&gt;,
+    window: &amp;Window,
     canvas: &amp;mut Canvas&lt;T&gt;,
     square_position: PhysicalPosition&lt;f64&gt;,
 ) {
@@ -423,20 +535,37 @@ event_loop.run(move |event, _target, control_flow| match event {
 <p>Now, if you run the code, the red square will happily follow the cursor wherever it goes.</p>
 <p><img src="1_getting_started/3_final.png" alt="Screenshot of a window: red square at the cursor position on a black background" /></p>
 <p>To recap, here's the code we've written:</p>
-<pre><code class="language-rust ignore">use femtovg::renderer::OpenGl;
+<pre><code class="language-rust ignore">use std::num::NonZeroU32;
+
+use femtovg::renderer::OpenGl;
 use femtovg::{Canvas, Color, Renderer};
-use glutin::dpi::{PhysicalPosition, PhysicalSize};
-use glutin::event::{Event, WindowEvent};
-use glutin::event_loop::{ControlFlow, EventLoop};
-use glutin::window::{Window, WindowBuilder};
-use glutin::{ContextBuilder, ContextWrapper, PossiblyCurrent};
+use glutin::surface::Surface;
+use glutin::{context::PossiblyCurrentContext, display::Display};
+use glutin_winit::DisplayBuilder;
+use raw_window_handle::HasRawWindowHandle;
+use winit::dpi::PhysicalPosition;
+use winit::event::{Event, WindowEvent};
+use winit::event_loop::{ControlFlow, EventLoop};
+use winit::window::WindowBuilder;
+use winit::{dpi::PhysicalSize, window::Window};
+
+use glutin::{
+    config::ConfigTemplateBuilder,
+    context::ContextAttributesBuilder,
+    display::GetGlDisplay,
+    prelude::*,
+    surface::{SurfaceAttributesBuilder, WindowSurface},
+};
 
 fn main() {
     let event_loop = EventLoop::new();
-    let context = create_window(&amp;event_loop);
+    let (context, gl_display, window, surface) = create_window(&amp;event_loop);
 
-    let renderer = OpenGl::new_from_glutin_context(&amp;context).expect(&quot;Cannot create renderer&quot;);
+    let renderer = unsafe { OpenGl::new_from_function_cstr(|s| gl_display.get_proc_address(s) as *const _) }
+        .expect(&quot;Cannot create renderer&quot;);
+
     let mut canvas = Canvas::new(renderer).expect(&quot;Cannot create canvas&quot;);
+    canvas.set_size(1000, 600, window.scale_factor() as f32);
 
     let mut mouse_position = PhysicalPosition::new(0., 0.);
 
@@ -444,38 +573,64 @@ fn main() {
         Event::WindowEvent { event, .. } =&gt; match event {
             WindowEvent::CursorMoved { position, .. } =&gt; {
                 mouse_position = position;
-                context.window().request_redraw();
+                window.request_redraw();
             }
             WindowEvent::CloseRequested =&gt; *control_flow = ControlFlow::Exit,
             _ =&gt; {}
         },
         Event::RedrawRequested(_) =&gt; {
-            render(&amp;context, &amp;mut canvas, mouse_position);
+            render(&amp;context, &amp;surface, &amp;window, &amp;mut canvas, mouse_position);
         }
         _ =&gt; {}
     })
 }
 
-fn create_window(event_loop: &amp;EventLoop&lt;()&gt;) -&gt; ContextWrapper&lt;PossiblyCurrent, Window&gt; {
+fn create_window(event_loop: &amp;EventLoop&lt;()&gt;) -&gt; (PossiblyCurrentContext, Display, Window, Surface&lt;WindowSurface&gt;) {
     let window_builder = WindowBuilder::new()
         .with_inner_size(PhysicalSize::new(1000., 600.))
         .with_title(&quot;Femtovg&quot;);
-    let context = ContextBuilder::new()
-        .with_vsync(false)
-        .build_windowed(window_builder, &amp;event_loop)
-        .unwrap();
-    let current_context = unsafe { context.make_current().expect(&quot;Could not make the context current&quot;) };
 
-    current_context
+    let template = ConfigTemplateBuilder::new().with_alpha_size(8);
+
+    let display_builder = DisplayBuilder::new().with_window_builder(Some(window_builder));
+
+    let (window, gl_config) = display_builder
+        .build(event_loop, template, |mut configs| configs.next().unwrap())
+        .unwrap();
+
+    let window = window.unwrap();
+
+    let gl_display = gl_config.display();
+
+    let context_attributes = ContextAttributesBuilder::new().build(Some(window.raw_window_handle()));
+
+    let mut not_current_gl_context =
+        Some(unsafe { gl_display.create_context(&amp;gl_config, &amp;context_attributes).unwrap() });
+
+    let attrs = SurfaceAttributesBuilder::&lt;WindowSurface&gt;::new().build(
+        window.raw_window_handle(),
+        NonZeroU32::new(1000).unwrap(),
+        NonZeroU32::new(600).unwrap(),
+    );
+
+    let surface = unsafe { gl_config.display().create_window_surface(&amp;gl_config, &amp;attrs).unwrap() };
+
+    (
+        not_current_gl_context.take().unwrap().make_current(&amp;surface).unwrap(),
+        gl_display,
+        window,
+        surface,
+    )
 }
 
 fn render&lt;T: Renderer&gt;(
-    context: &amp;ContextWrapper&lt;PossiblyCurrent, Window&gt;,
+    context: &amp;PossiblyCurrentContext,
+    surface: &amp;Surface&lt;WindowSurface&gt;,
+    window: &amp;Window,
     canvas: &amp;mut Canvas&lt;T&gt;,
     square_position: PhysicalPosition&lt;f64&gt;,
 ) {
     // Make sure the canvas has the right size:
-    let window = context.window();
     let size = window.inner_size();
     canvas.set_size(size.width, size.height, window.scale_factor() as f32);
 
@@ -493,7 +648,7 @@ fn render&lt;T: Renderer&gt;(
     // Tell renderer to execute all drawing commands
     canvas.flush();
     // Display what we've just rendered
-    context.swap_buffers().expect(&quot;Could not swap buffers&quot;);
+    surface.swap_buffers(context).expect(&quot;Could not swap buffers&quot;);
 }
 </code></pre>
 

@@ -137,20 +137,22 @@
                         <h1 id="rendering"><a class="header" href="#rendering">Rendering</a></h1>
 <p>Now that we have a <code>canvas</code>, we can start drawing things! To keep things organized, let's create a <code>render</code> function that will do all the rendering:</p>
 <pre><code class="language-rust ignore">fn main() {
+    let (context, gl_display, window, surface) = ...;
     // [...]
     let mut canvas = ..;
 
-    render(&amp;context, &amp;mut canvas);
+    render(&amp;context, &amp;surface, &amp;window, &amp;mut canvas);
 }
 
 fn render&lt;T: Renderer&gt;(
-    context: &amp;ContextWrapper&lt;PossiblyCurrent, Window&gt;,
-    canvas: &amp;mut Canvas&lt;T&gt;
+    context: &amp;PossiblyCurrentContext,
+    surface: &amp;Surface&lt;WindowSurface&gt;,
+    window: &amp;Window,
+    canvas: &amp;mut Canvas&lt;T&gt;,
 ) {}
 </code></pre>
 <p>In <code>render</code>, first let's make sure that the canvas has the right size – it should match the dimensions and DPI of the window:</p>
-<pre><code class="language-rust ignore">let window = context.window();
-let size = window.inner_size();
+<pre><code class="language-rust ignore">let size = window.inner_size();
 canvas.set_size(size.width, size.height, window.scale_factor() as f32);
 </code></pre>
 <p>Next, let's do some actual drawing. As an example, we'll fill a smol red rectangle:</p>
@@ -160,46 +162,92 @@ canvas.set_size(size.width, size.height, window.scale_factor() as f32);
 <p><a href="https://docs.rs/femtovg/latest/femtovg/struct.Canvas.html#method.clear_rect"><code>clear_rect</code></a> fills a rectangle. The first 2 parameters specify its position, and the next 2 specify the dimensions of the rectangle.</p>
 <p><a href="https://docs.rs/femtovg/latest/femtovg/struct.Color.html#method.rgbf"><code>Color::rgbf</code></a> is one of the functions that lets you create a Color. The three parameters correspond to the Red, Green and Blue values in the range 0..1.</p>
 </blockquote>
-<p>Even if you consider your minimalist abstract masterpiece complete, there's actually some more code we need to write. We have to call <a href="https://docs.rs/femtovg/latest/femtovg/struct.Canvas.html#method.flush"><code>canvas.flush()</code></a> to tell the renderer to execute all drawing commands. Then, we must call <a href="https://docs.rs/glutin/latest/glutin/struct.ContextWrapper.html#method.swap_buffers"><code>swap_buffers</code></a> to display what we've rendered: </p>
-<pre><code class="language-rust ignore">context.swap_buffers().expect(&quot;Could not swap buffers&quot;);
+<p>Even if you consider your minimalist abstract masterpiece complete, there's actually some more code we need to write. We have to call <a href="https://docs.rs/femtovg/latest/femtovg/struct.Canvas.html#method.flush"><code>canvas.flush()</code></a> to tell the renderer to execute all drawing commands. Then, we must call <a href="https://docs.rs/glutin/0.30.10/glutin/surface/enum.Surface.html#method.swap_buffers"><code>swap_buffers</code></a> to display what we've rendered: </p>
+<pre><code class="language-rust ignore">canvas.flush();
+surface.swap_buffers(context).expect(&quot;Could not swap buffers&quot;);
 </code></pre>
 <p>The <code>render</code> function is finished, but if you run your program, you won't get to look at it for very long – as soon as <code>render</code> completes, the program exits. To fix this, let's freeze the program with an infinite <code>loop {}</code>.</p>
 <p>Our program now looks like this:</p>
-<pre><code class="language-rust ignore">use femtovg::renderer::OpenGl;
+<pre><code class="language-rust ignore">use std::num::NonZeroU32;
+
+use femtovg::renderer::OpenGl;
 use femtovg::{Canvas, Color, Renderer};
-use glutin::dpi::PhysicalSize;
-use glutin::event_loop::EventLoop;
-use glutin::window::{Window, WindowBuilder};
-use glutin::{ContextBuilder, ContextWrapper, PossiblyCurrent};
+use glutin::surface::Surface;
+use glutin::{context::PossiblyCurrentContext, display::Display};
+use glutin_winit::DisplayBuilder;
+use raw_window_handle::HasRawWindowHandle;
+use winit::event_loop::EventLoop;
+use winit::window::WindowBuilder;
+use winit::{dpi::PhysicalSize, window::Window};
+
+use glutin::{
+    config::ConfigTemplateBuilder,
+    context::ContextAttributesBuilder,
+    display::GetGlDisplay,
+    prelude::*,
+    surface::{SurfaceAttributesBuilder, WindowSurface},
+};
 
 fn main() {
     let event_loop = EventLoop::new();
-    let context = create_window(&amp;event_loop);
+    let (context, gl_display, window, surface) = create_window(&amp;event_loop);
 
-    let renderer = OpenGl::new_from_glutin_context(&amp;context).expect(&quot;Cannot create renderer&quot;);
+    let renderer = unsafe { OpenGl::new_from_function_cstr(|s| gl_display.get_proc_address(s) as *const _) }
+        .expect(&quot;Cannot create renderer&quot;);
+
     let mut canvas = Canvas::new(renderer).expect(&quot;Cannot create canvas&quot;);
+    canvas.set_size(1000, 600, window.scale_factor() as f32);
 
-    render(&amp;context, &amp;mut canvas);
+    render(&amp;context, &amp;surface, &amp;window, &amp;mut canvas);
 
     loop {}
 }
 
-fn create_window(event_loop: &amp;EventLoop&lt;()&gt;) -&gt; ContextWrapper&lt;PossiblyCurrent, Window&gt; {
+fn create_window(event_loop: &amp;EventLoop&lt;()&gt;) -&gt; (PossiblyCurrentContext, Display, Window, Surface&lt;WindowSurface&gt;) {
     let window_builder = WindowBuilder::new()
         .with_inner_size(PhysicalSize::new(1000., 600.))
         .with_title(&quot;Femtovg&quot;);
-    let context = ContextBuilder::new()
-        .with_vsync(false)
-        .build_windowed(window_builder, &amp;event_loop)
-        .unwrap();
-    let current_context = unsafe { context.make_current().expect(&quot;Could not make the context current&quot;) };
 
-    current_context
+    let template = ConfigTemplateBuilder::new().with_alpha_size(8);
+
+    let display_builder = DisplayBuilder::new().with_window_builder(Some(window_builder));
+
+    let (window, gl_config) = display_builder
+        .build(event_loop, template, |mut configs| configs.next().unwrap())
+        .unwrap();
+
+    let window = window.unwrap();
+
+    let gl_display = gl_config.display();
+
+    let context_attributes = ContextAttributesBuilder::new().build(Some(window.raw_window_handle()));
+
+    let mut not_current_gl_context =
+        Some(unsafe { gl_display.create_context(&amp;gl_config, &amp;context_attributes).unwrap() });
+
+    let attrs = SurfaceAttributesBuilder::&lt;WindowSurface&gt;::new().build(
+        window.raw_window_handle(),
+        NonZeroU32::new(1000).unwrap(),
+        NonZeroU32::new(600).unwrap(),
+    );
+
+    let surface = unsafe { gl_config.display().create_window_surface(&amp;gl_config, &amp;attrs).unwrap() };
+
+    (
+        not_current_gl_context.take().unwrap().make_current(&amp;surface).unwrap(),
+        gl_display,
+        window,
+        surface,
+    )
 }
 
-fn render&lt;T: Renderer&gt;(context: &amp;ContextWrapper&lt;PossiblyCurrent, Window&gt;, canvas: &amp;mut Canvas&lt;T&gt;) {
+fn render&lt;T: Renderer&gt;(
+    context: &amp;PossiblyCurrentContext,
+    surface: &amp;Surface&lt;WindowSurface&gt;,
+    window: &amp;Window,
+    canvas: &amp;mut Canvas&lt;T&gt;,
+) {
     // Make sure the canvas has the right size:
-    let window = context.window();
     let size = window.inner_size();
     canvas.set_size(size.width, size.height, window.scale_factor() as f32);
 
@@ -208,8 +256,9 @@ fn render&lt;T: Renderer&gt;(context: &amp;ContextWrapper&lt;PossiblyCurrent, Wi
 
     // Tell renderer to execute all drawing commands
     canvas.flush();
+
     // Display what we've just rendered
-    context.swap_buffers().expect(&quot;Could not swap buffers&quot;);
+    surface.swap_buffers(context).expect(&quot;Could not swap buffers&quot;);
 }
 </code></pre>
 <p>And when we run it, we see the red square we rendered:</p>
