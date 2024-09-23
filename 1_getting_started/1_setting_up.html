@@ -264,7 +264,7 @@ fn create_window(event_loop: &amp;EventLoop&lt;()&gt;) -&gt; PossiblyCurrentCont
 <p>It compiles, runs, and immediately exits successfully.</p>
 <h2 id="creating-a-canvas"><a class="header" href="#creating-a-canvas">Creating a Canvas</a></h2>
 <p>We have an OpenGL context and display now – the Femtovg renderer can use it as output for rendering things. Let's create a renderer from the display we have:</p>
-<pre><code class="language-rust ignore">let renderer = unsafe { OpenGl::new_from_function_cstr(|s| gl_display.get_proc_address(s) as *const _) }
+<pre><code class="language-rust ignore">let renderer = unsafe { OpenGl::new_from_function_cstr(|s| gl_display.get_proc_address(s).cast()) }
         .expect(&quot;Cannot create renderer&quot;);
 </code></pre>
 <p>The renderer is responsible for drawing things, but we can't draw on it directly – instead, we need to create a Canvas object:</p>
