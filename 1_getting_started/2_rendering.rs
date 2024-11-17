@@ -1,7 +1,7 @@
 use std::num::NonZeroU32;
 
 use femtovg::renderer::OpenGl;
-use femtovg::{Canvas, Color, Renderer};
+use femtovg::{Canvas, Color};
 use glutin::surface::Surface;
 use glutin::{context::PossiblyCurrentContext, display::Display};
 use glutin_winit::DisplayBuilder;
@@ -19,7 +19,7 @@ use glutin::{
 };
 
 fn main() {
-    let event_loop = EventLoop::new();
+    let event_loop = EventLoop::new().unwrap();
     let (context, gl_display, window, surface) = create_window(&event_loop);
 
     let renderer = unsafe { OpenGl::new_from_function_cstr(|s| gl_display.get_proc_address(s).cast()) }
@@ -71,11 +71,11 @@ fn create_window(event_loop: &EventLoop<()>) -> (PossiblyCurrentContext, Display
     )
 }
 
-fn render<T: Renderer>(
+fn render(
     context: &PossiblyCurrentContext,
     surface: &Surface<WindowSurface>,
     window: &Window,
-    canvas: &mut Canvas<T>,
+    canvas: &mut Canvas<OpenGl>,
 ) {
     // Make sure the canvas has the right size:
     let size = window.inner_size();
