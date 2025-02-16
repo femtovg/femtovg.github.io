@@ -286,19 +286,20 @@ fn main() {
     let mut mouse_position = PhysicalPosition::new(0., 0.);
 
     event_loop
-        .run(move |event, target| match event {
-            Event::WindowEvent { event, .. } =&gt; match event {
-                WindowEvent::CursorMoved { position, .. } =&gt; {
-                    mouse_position = position;
-                    window.request_redraw();
+        .run(move |event, target| {
+            if let Event::WindowEvent { event, .. } = event {
+                match event {
+                    WindowEvent::CursorMoved { position, .. } =&gt; {
+                        mouse_position = position;
+                        window.request_redraw();
+                    }
+                    WindowEvent::CloseRequested =&gt; target.exit(),
+                    WindowEvent::RedrawRequested { .. } =&gt; {
+                        render(&amp;context, &amp;surface, &amp;window, &amp;mut canvas, mouse_position);
+                    }
+                    _ =&gt; {}
                 }
-                WindowEvent::CloseRequested =&gt; target.exit(),
-                WindowEvent::RedrawRequested { .. } =&gt; {
-                    render(&amp;context, &amp;surface, &amp;window, &amp;mut canvas, mouse_position);
-                }
-                _ =&gt; {}
-            },
-            _ =&gt; {}
+            }
         })
         .unwrap();
 }
