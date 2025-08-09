@@ -578,7 +578,7 @@ fn main() {
                         window.request_redraw();
                     }
                     WindowEvent::CloseRequested =&gt; target.exit(),
-                    WindowEvent::RedrawRequested { .. } =&gt; {
+                    WindowEvent::RedrawRequested =&gt; {
                         render(&amp;context, &amp;surface, &amp;window, &amp;mut canvas, mouse_position);
                     }
                     _ =&gt; {}
